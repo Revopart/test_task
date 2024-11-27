@@ -2,20 +2,30 @@
 
 // Функция для обработки и бинаризации изображения
 Mat preprocessImage(const Mat& image) {
-    Mat gray, binary;
+    Mat gray, binary, test;
     cvtColor(image, gray, COLOR_BGR2GRAY);
     threshold(gray, binary, 0, 255, cv::THRESH_BINARY_INV + cv::THRESH_OTSU);
+    resize(binary, test, Size(720, 720));
+
     return binary;
 }
 
 // Функция для извлечения контуров
 vector<Rect> extractContours(const Mat& binaryImage) {
     vector<vector<Point>> contours;
+    
+    // Извлекаем контуры на бинаризованном изображении
     findContours(binaryImage, contours, RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    
     vector<Rect> boundingBoxes;
+    // Для каждого контура вычисляем ограничивающий прямоугольник
     for (const auto& contour : contours) {
         boundingBoxes.push_back(boundingRect(contour));
     }
+
+    
+
+    
     return boundingBoxes;
 }
 
@@ -41,11 +51,11 @@ Mat rotateImage(const Mat& image, double angle) {
 string recognizeCharacterWithRotation(Mat letter, tesseract::TessBaseAPI& ocr) {
     string bestResult = "n/a";
     float bestConfidence = -1;
-    double angleStep = 12;
-    for (double angle = 0; angle < 360; angle += angleStep) {
+    double angleStep = 1;
+    for (double angle = 0; angle < 4; angle += angleStep) {
         Mat rotatedLetter = rotateImage(letter, angle);
         auto [result, confidence] = recognizeCharacter(rotatedLetter, ocr);
-        if (!result.empty() && result.length() == 1 && confidence > bestConfidence) {
+        if (result.length() == 3 && confidence > bestConfidence) {
             bestResult = result;
             bestConfidence = confidence;
         }
@@ -68,11 +78,18 @@ string processImage(const string& imagePath) {
         return R"({"error": "Failed to initialize Tesseract"})";
     }
     ocr.SetVariable("tessedit_char_whitelist", "μσπλ");
-
+    ocr.SetPageSegMode(tesseract::PSM_SINGLE_CHAR);
     map<string, int> letterCounts;
     for (const auto& box : boundingBoxes) {
-        Mat letter = binaryImage(box);
-        string recognizedLetter = recognizeCharacterWithRotation(letter, ocr);
+        Mat letter = binaryImage(box); // Вырезаем область буквы
+        Mat padded;
+        int maxSize = max(letter.rows, letter.cols);
+        copyMakeBorder(letter, padded, 
+                   (maxSize - letter.rows) / 2, (maxSize - letter.rows + 1) / 2, 
+                   (maxSize - letter.cols) / 2, (maxSize - letter.cols + 1) / 2, 
+                   BORDER_CONSTANT, Scalar(0));
+        resize(padded, padded, Size(28, 28), 0, 0, INTER_LINEAR);
+        string recognizedLetter = recognizeCharacterWithRotation(padded, ocr);
         recognizedLetter.erase(remove_if(recognizedLetter.begin(), recognizedLetter.end(), ::isspace), recognizedLetter.end());
         if (!recognizedLetter.empty()) {
             letterCounts[recognizedLetter]++;
