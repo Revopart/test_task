@@ -3,4 +3,4 @@
 #include <fstream>
 #include "httplib.h"
 #include "recognizer.h"
-using namespace httplib
+using namespace httplib;
