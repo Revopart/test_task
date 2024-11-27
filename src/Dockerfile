@@ -1,37 +1,21 @@
-# Используем официальный образ Ubuntu в качестве базового
-FROM ubuntu:22.04
-
-# Устанавливаем основные зависимости
+FROM ubuntu:20.04
+ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     build-essential \
-    cmake \
-    wget \
-    curl \
-    git \
     libopencv-dev \
-    g++ \
-    libleptonica-dev \
     tesseract-ocr \
+    libtesseract-dev \
+    libpthread-stubs0-dev \
+    pkg-config \
     tesseract-ocr-ell \
-    libtesseract-dev
+    && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем OpenCV (если требуется последняя версия, можно использовать более сложный процесс сборки)
-RUN apt-get install -y libopencv-core-dev libopencv-imgproc-dev libopencv-imgcodecs-dev
-
-# Создаём рабочую директорию
-WORKDIR /app
-
-# Копируем исходный код в контейнер
 COPY . /app
 
-# Скачиваем библиотеку cpp-httplib
-RUN git clone https://github.com/yhirose/cpp-httplib.git /app/cpp-httplib
+WORKDIR /app
 
-# Компилируем сервер
-RUN g++ -o server main.cpp -I./cpp-httplib -lopencv_core -lopencv_imgproc -lopencv_imgcodecs -ltesseract -lpthread
+RUN g++ -o server recognizer.cpp api_server.cpp -std=c++17 -I. $(pkg-config --cflags --libs opencv4) -ltesseract -lpthread
 
-# Указываем порт для API
 EXPOSE 8000
 
-# Запускаем сервер
 CMD ["./server"]

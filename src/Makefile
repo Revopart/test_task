@@ -1,38 +1,28 @@
-# Имя Docker-образа
-IMAGE_NAME = cpp-ocr-api
-CONTAINER_NAME = cpp-ocr-container
+TARGET = api_server
+SRC = recognizer.cpp api_server.cpp
+CXX = g++
+CXXFLAGS = -std=c++17 -I. $(shell pkg-config --cflags --libs opencv4) -ltesseract -lpthread
 
-# Основные команды
-all: build run
+# Имя Docker образа
+DOCKER_IMAGE = server
 
-# Сборка Docker-образа
-build:
-	docker build -t $(IMAGE_NAME) .
+all: build
 
-# Запуск контейнера
-run:
-	docker run --name $(CONTAINER_NAME) -p 8000:8000 -d $(IMAGE_NAME)
+build: $(TARGET)
 
-# Остановка контейнера
-stop:
-	docker stop $(CONTAINER_NAME) || true
-	docker rm $(CONTAINER_NAME) || true
+$(TARGET): $(SRC)
+	$(CXX) -o $(TARGET) $(SRC) $(CXXFLAGS)
 
-# Перезапуск контейнера
-restart: stop run
+clean:
+	rm -f $(TARGET)
 
-# Очистка: удаление образа и контейнера
-clean: stop
-	docker rmi $(IMAGE_NAME) || true
+rebuild: clean build
 
-# Просмотр логов контейнера
-logs:
-	docker logs -f $(CONTAINER_NAME)
+docker-build:
+	docker build -t $(DOCKER_IMAGE) .
 
-# Тестовый запрос (зависит от наличия curl)
-test:
-	curl -X 'POST' \
-	  'http://127.0.0.1:8000/predict' \
-	  -H 'accept: application/json' \
-	  -H 'Content-Type: multipart/form-data' \
-	  -F 'file=@letters.png'
+
+docker-run:
+	docker run -p 8000:8000 $(DOCKER_IMAGE)
+
+docker-rebuild: docker-build docker-run
