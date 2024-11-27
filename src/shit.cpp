@@ -1,19 +1,21 @@
 #include <opencv2/opencv.hpp>
 #include <tesseract/baseapi.h>
+#include <httplib.h>
 #include <iostream>
 #include <map>
 #include <vector>
+#include <string>
+#include <fstream>
 
 using namespace cv;
 using namespace std;
+using namespace httplib;
 
 // Функция для обработки и бинаризации изображения
 Mat preprocessImage(const Mat& image) {
-    Mat gray, binary, test;
+    Mat gray, binary;
     cvtColor(image, gray, COLOR_BGR2GRAY);
     threshold(gray, binary, 0, 255, cv::THRESH_BINARY_INV + cv::THRESH_OTSU);
-    imshow(binary, "sd");
-    waitkey(0);
     return binary;
 }
 
@@ -31,25 +33,26 @@ vector<Rect> extractContours(const Mat& binaryImage) {
 // Функция для распознавания текста с использованием Tesseract OCR
 pair<string, float> recognizeCharacter(const Mat& letter, tesseract::TessBaseAPI& ocr) {
     ocr.SetImage(letter.data, letter.cols, letter.rows, 1, letter.step);
-    ocr.SetSourceResolution(100); // Устанавливаем разрешение источника
+    ocr.SetSourceResolution(100);
     string text = string(ocr.GetUTF8Text());
-    float confidence = ocr.MeanTextConf(); // Получаем среднюю вероятность
+    float confidence = ocr.MeanTextConf();
     return {text, confidence};
 }
- //Функция поворота буквы вокруг центра
+
+// Функция поворота изображения
 Mat rotateImage(const Mat& image, double angle) {
     Point2f center(image.cols / 2.0, image.rows / 2.0);
     Mat rotationMatrix = getRotationMatrix2D(center, angle, 1.0);
     Mat rotatedImage;
-    warpAffine(image, rotatedImage, rotationMatrix, image.size(), INTER_CUBIC, BORDER_CONSTANT, Scalar(255, 255, 255));  // Белый фон
+    warpAffine(image, rotatedImage, rotationMatrix, image.size(), INTER_CUBIC, BORDER_CONSTANT, Scalar(255, 255, 255));
     return rotatedImage;
 }
 
-// Функция для распознавания буквы с учетом всех вращений
+// Функция для распознавания буквы с учётом поворотов
 string recognizeCharacterWithRotation(Mat letter, tesseract::TessBaseAPI& ocr) {
-    string bestResult = "n/a"; // На случай, если не найдется символ из ТЗ
+    string bestResult = "n/a";
     float bestConfidence = -1;
-    double angleStep = 12; 
+    double angleStep = 12;
     for (double angle = 0; angle < 360; angle += angleStep) {
         Mat rotatedLetter = rotateImage(letter, angle);
         auto [result, confidence] = recognizeCharacter(rotatedLetter, ocr);
@@ -58,52 +61,73 @@ string recognizeCharacterWithRotation(Mat letter, tesseract::TessBaseAPI& ocr) {
             bestConfidence = confidence;
         }
     }
-
-    cout << "Лучший результат: " << bestResult << " с вероятностью: " << bestConfidence << "%" << endl;
     return bestResult;
 }
 
-int main() {
-    string imagePath = "/home/vinylbro/test_task/materials/123.jpg"; // Замените на путь к вашему изображению
+// Основной обработчик API
+string processImage(const string& imagePath) {
     Mat image = imread(imagePath);
     if (image.empty()) {
-        cerr << "Не удалось загрузить изображение!" << endl;
-        return -1;
+        return R"({"error": "Failed to load image"})";
     }
+
     Mat binaryImage = preprocessImage(image);
     vector<Rect> boundingBoxes = extractContours(binaryImage);
+
     tesseract::TessBaseAPI ocr;
     if (ocr.Init(NULL, "ell", tesseract::OEM_LSTM_ONLY)) {
-        cerr << "Не удалось инициировать греческий язык" << endl;
-        return -1;
+        return R"({"error": "Failed to initialize Tesseract"})";
     }
-    ocr.SetVariable("tessedit_char_whitelist", "μσπλ"); // Указываю буквы из ТЗ
-    // Словарь для подсчета частоты букв
+    ocr.SetVariable("tessedit_char_whitelist", "μσπλ");
+
     map<string, int> letterCounts;
-        cout << boundingBoxes.size();
-    // Распознаем каждую букву
     for (const auto& box : boundingBoxes) {
-        Mat letter = binaryImage(box); // Вырезаем область буквы
-        string recognizedLetter= recognizeCharacterWithRotation(letter, ocr);
-
-        // Удаляем лишние пробелы или символы
+        Mat letter = binaryImage(box);
+        string recognizedLetter = recognizeCharacterWithRotation(letter, ocr);
         recognizedLetter.erase(remove_if(recognizedLetter.begin(), recognizedLetter.end(), ::isspace), recognizedLetter.end());
-
         if (!recognizedLetter.empty()) {
             letterCounts[recognizedLetter]++;
         }
     }
-    
 
-
-    // Вывод результата
-    cout << "{";
+    // Формируем JSON результат
+    string result = "{";
     for (const auto& [letter, count] : letterCounts) {
-        cout << "\"" << letter << "\": " << count << ", ";
+        result += "\"" + letter + "\": " + to_string(count) + ", ";
     }
-    cout << "}" << endl;
-
-    // Освобождаем ресурсы
+    if (!letterCounts.empty()) {
+        result.pop_back();
+        result.pop_back();
+    }
+    result += "}";
     ocr.End();
+    return result;
+}
+
+int main() {
+    Server svr;
+
+    svr.Post("/predict", [](const Request& req, Response& res) {
+        auto file = req.get_file_value("file");
+        string tempFilePath = "temp_image.jpg";
+
+        // Сохранение файла на диск
+        ofstream ofs(tempFilePath, ios::binary);
+        ofs.write(file.content.data(), file.content.size());
+        ofs.close();
+
+        // Обработка изображения
+        string jsonResponse = processImage(tempFilePath);
+
+        // Удаление временного файла
+        remove(tempFilePath.c_str());
+
+        // Отправка ответа
+        res.set_content(jsonResponse, "application/json");
+    });
+
+    cout << "Сервер запущен на http://127.0.0.1:8000" << endl;
+    svr.listen("0.0.0.0", 8000);
+
     return 0;
 }
